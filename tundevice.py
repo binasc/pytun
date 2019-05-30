@@ -2,7 +2,6 @@ import ctypes
 import errno
 import fcntl
 import os
-import socket
 import struct
 import sys
 import traceback
@@ -23,24 +22,12 @@ class FileWrapper(object):
         return self._fd
 
 
-MAX_KCTL_NAME = 96
-class CtlInfo (ctypes.Structure):
-    _fields_ = [
-        ('ctl_id', ctypes.c_uint32),
-        ('ctl_name', ctypes.c_char * MAX_KCTL_NAME),
-    ]
-
-
 class TunDevice(object):
 
     TUNSETIFF = ioctl.IOW(ord('T'), 202, ctypes.c_int)
     IFF_TUN = 0x0001
     IFF_TAP = 0x0002
     IFF_NO_PI = 0x1000
-
-    CTLIOCGINFO = ioctl.IOWR(ord('N'), 3, CtlInfo)
-    UTUN_CONTROL_NAME = bytes('com.apple.net.utun_control', 'utf-8')
-    UTUN_OPT_IFNAME = 2
 
     def __hash__(self):
         return hash(self._fd.fileno())
@@ -54,30 +41,21 @@ class TunDevice(object):
         return "%s: %d" % (self._prefix, self._fd.fileno())
 
     def __init__(self, if_name, mtu):
-        if sys.platform.startswith('linux'):
-            fd = os.open('/dev/net/tun', os.O_RDWR)
-            if if_name is None:
-                if_name = 'tun%d'
-            mode = self.IFF_TUN | self.IFF_NO_PI
-            ctrl_str = struct.pack('16sH', if_name.encode('ascii'), mode)
-            ifs = fcntl.ioctl(fd, self.TUNSETIFF, ctrl_str)
-            self._if_name = ifs[:16].strip(bytes([0])).decode('ascii')
-            self._fd = FileWrapper(fd)
-        elif sys.platform.startswith('darwin'):
-            sock = socket.socket(socket.PF_SYSTEM, socket.SOCK_DGRAM, socket.SYSPROTO_CONTROL)
-            ctrl_info = bytearray(struct.pack('I' + str(MAX_KCTL_NAME) + 's', 0, self.UTUN_CONTROL_NAME))
-            fcntl.ioctl(sock, self.CTLIOCGINFO, ctrl_info)
-            ctl_id, = struct.unpack('I', ctrl_info[:4])
-            sock.connect((ctl_id, 10))
-            if_name = sock.getsockopt(socket.SYSPROTO_CONTROL, self.UTUN_OPT_IFNAME, 20)
-            self._if_name = if_name.strip(bytes([0])).decode('ascii')
-            self._fd = sock
-        else:
-            raise Exception('unsupported platform: ' + sys.platform)
+        fd = os.open('/dev/net/tun', os.O_RDWR)
 
-        self._prefix = 'TUN-' + self._if_name
+        if if_name is None:
+            if_name = 'tun%d'
+        mode = self.IFF_TUN | self.IFF_NO_PI
+        ctrl_str = struct.pack('16sH', if_name.encode('ascii'), mode)
+
+        ifs = fcntl.ioctl(fd, self.TUNSETIFF, ctrl_str)
+        self._if_name = ifs[:16].strip(bytes([0])).decode('ascii')
+        self._fd = FileWrapper(fd)
+
         flag = fcntl.fcntl(self._fd.fileno(), fcntl.F_GETFL)
         fcntl.fcntl(self._fd.fileno(), fcntl.F_SETFL, flag | os.O_NONBLOCK)
+
+        self._prefix = 'TUN-' + self._if_name
         self._mtu = mtu
 
         self._rev = Event()

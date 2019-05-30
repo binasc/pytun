@@ -2,6 +2,7 @@
 import getopt
 import sys
 
+import epoll
 import event
 import loglevel
 import tuntun
@@ -23,14 +24,7 @@ Accept Side: -a {listen_on} -t tun_if
 
 
 if __name__ == '__main__':
-    if sys.platform.startswith('linux'):
-        import epoll
-        epoll.Epoll.init()
-        _logger.debug("epoll")
-    elif sys.platform.startswith('darwin'):
-        import kqueue
-        kqueue.Kqueue.init()
-        _logger.debug("kqueue")
+    epoll.Epoll.init()
 
     addr = None
     accept_mode = False
