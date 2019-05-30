@@ -5,7 +5,7 @@ import sys
 import epoll
 import event
 import loglevel
-import tuntun
+import tunnel
 from rawsocket import RawSocket
 from tundevice import TunDevice
 
@@ -59,13 +59,13 @@ if __name__ == '__main__':
     raw = RawSocket(mtu, 253)
 
     if accept_mode:
-        raw.set_on_receive(tuntun.gen_on_accept_side_raw_tun_received(dev))
-        dev.set_on_receive(tuntun.gen_on_accept_side_tun_dev_received(raw))
+        raw.set_on_receive(tunnel.gen_on_accept_side_raw_tun_received(dev))
+        dev.set_on_receive(tunnel.gen_on_accept_side_tun_dev_received(raw))
         raw.begin_receiving()
     else:
         raw.connect(addr)
-        raw.set_on_receive(tuntun.gen_on_connect_side_raw_tun_received(dev))
-        dev.set_on_receive(tuntun.gen_on_connect_side_tun_dev_received('10.14.0.2', '10.14.0.1', raw))
+        raw.set_on_receive(tunnel.gen_on_connect_side_raw_tun_received(dev))
+        dev.set_on_receive(tunnel.gen_on_connect_side_tun_dev_received('10.14.0.2', '10.14.0.1', raw))
         raw.begin_receiving()
 
     dev.begin_receiving()
