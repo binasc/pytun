@@ -31,8 +31,9 @@ if __name__ == '__main__':
     connect_mode = False
     tun_if = None
     mtu = None
+    proto = None
 
-    optlist, args = getopt.getopt(sys.argv[1:], 'ac:t:m:h')
+    optlist, args = getopt.getopt(sys.argv[1:], 'ac:t:m:p:h')
     for cmd, arg in optlist:
         if cmd == '-a':
             accept_mode = True
@@ -47,6 +48,8 @@ if __name__ == '__main__':
             tun_if = arg
         if cmd == '-m':
             mtu = int(arg)
+        if cmd == '-p':
+            proto = int(arg)
         if cmd == '-h':
             print(_helpText)
             sys.exit(0)
@@ -56,7 +59,7 @@ if __name__ == '__main__':
         sys.exit(0)
 
     dev = TunDevice(tun_if, mtu)
-    raw = RawSocket(mtu, 253)
+    raw = RawSocket(mtu, proto)
 
     if accept_mode:
         raw.set_on_receive(tunnel.gen_on_accept_side_raw_tun_received(dev))
