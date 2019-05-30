@@ -2,10 +2,10 @@ import copy
 import random
 import socket
 import struct
-import time
 
 import cird
 import loglevel
+from address import Address
 from dns import DNSRecord
 from dns import QTYPE
 from domain import Domain
@@ -26,43 +26,9 @@ TEST_DNS_SERVER = ip_string_to_long('35.201.154.22')
 
 global_proxy = True
 domain_service = Domain('blocked.txt', 'poisoned.txt')
-blocked_address = set()
-blocked_address_last_sync = current = time.time()
+address_service = Address('blocked_ip.txt')
 normal_address = set()
 modified_query = {}
-
-
-def restore_blocked_address():
-    try:
-        fp = open('blocked_ip.txt', 'rb')
-        content = fp.read()
-        for i in range(0, len(content), 4):
-            blocked_address.add(struct.unpack('!I', content[i: i + 4])[0])
-        _logger.info('Update %d blocked ips', len(content) / 4)
-        fp.close()
-    except IOError as e:
-        _logger.warning("Failed to open blocked_ip.txt: %s", str(e))
-        return False
-
-
-restore_blocked_address()
-
-
-def update_blocked_address(address):
-    blocked_address.update(address)
-    now = time.time()
-    global blocked_address_last_sync
-    if now - blocked_address_last_sync > 60:
-        try:
-            fp = open('blocked_ip.txt', 'wb')
-        except IOError as e:
-            _logger.warning("Failed to write blocked_ip.txt: %s", str(e))
-            return
-        for ip in blocked_address:
-            fp.write(struct.pack('!I', ip))
-        fp.close()
-        _logger.debug("Synced %d blocked ip", len(blocked_address))
-        blocked_address_last_sync = now
 
 
 def change_src(packet):
@@ -172,7 +138,7 @@ def is_through_tunnel(packet, to_addr):
             change_to_dns_server(packet, id_, FAST_DNS_SERVER)
 
     if not through_tunnel:
-        if dst_ip in blocked_address:
+        if address_service.is_blocked(dst_ip):
             _logger.debug('address: %s sent via tunnel', packet.get_destination_ip())
             through_tunnel = True
 
@@ -191,7 +157,7 @@ def gen_on_connect_side_raw_tun_received(tun):
         packet = Packet(ip_packet)
         addr_list, id_, _ = try_parse_dns_result(packet)
         if addr_list is not None:
-            update_blocked_address(addr_list)
+            address_service.update_blocked_address(addr_list)
             try_restore_dns(packet, id_)
         tun.send(packet.get_packet())
         return True
