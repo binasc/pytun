@@ -103,15 +103,12 @@ def test_domain_poisoned(tun, packet):
     tun.send(copied.get_packet())
 
 
-def is_through_tunnel(packet, to_addr):
-    if global_proxy:
-        return True, False
-
+def is_through_tunnel(packet, remote_addr):
     if packet.is_ipv6():
         return True, False
 
     dst_ip = packet.get_raw_destination_ip()
-    if dst_ip == to_addr:
+    if dst_ip == remote_addr:
         return True, False
 
     if cird.is_reversed_address(dst_ip):
@@ -119,6 +116,9 @@ def is_through_tunnel(packet, to_addr):
                      packet.get_destination_ip(), packet.get_destination_port(),
                      packet.get_source_ip(), packet.get_source_port())
         return False, False
+
+    if global_proxy:
+        return True, False
 
     through_tunnel = False
     dns_query = False
@@ -167,11 +167,11 @@ def gen_on_connect_side_raw_tun_received(tun):
 
 def gen_on_connect_side_tun_dev_received(addr, gateway, tunnel):
 
-    from_addr = ip_string_to_long(addr)
-    to_addr = ip_string_to_long(gateway)
+    local_addr = ip_string_to_long(addr)
+    remote_addr = ip_string_to_long(gateway)
 
     def connect_side_multiplex(self_, _, packet):
-        if need_restore(from_addr, packet):
+        if need_restore(local_addr, packet):
             restore_dst(packet)
             if packet.is_rst():
                 _logger.info('%s has been reset', packet.get_source_ip())
@@ -188,7 +188,7 @@ def gen_on_connect_side_tun_dev_received(addr, gateway, tunnel):
             self_.send(packet.get_packet())
             return True
 
-        through_tunnel, dns_query = is_through_tunnel(packet, to_addr)
+        through_tunnel, dns_query = is_through_tunnel(packet, remote_addr)
         if not through_tunnel:
             if dns_query is True:
                 test_domain_poisoned(self_, packet)
