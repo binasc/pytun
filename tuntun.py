@@ -1,21 +1,17 @@
 import copy
 import random
-import re
 import socket
 import struct
 import time
-import uuid
-
-from watchdog.events import PatternMatchingEventHandler
-from watchdog.observers import Observer
 
 import cird
 import loglevel
 from dns import DNSRecord
 from dns import QTYPE
+from domain import Domain
 from packet import Packet
 
-_logger = loglevel.get_logger('tuntun')
+_logger = loglevel.get_logger('tunnel')
 _logger.setLevel(loglevel.DEFAULT_LEVEL)
 
 
@@ -29,8 +25,7 @@ TEST_DNS_SERVER = ip_string_to_long('35.201.154.22')
 
 
 global_proxy = True
-poisoned_domain = set()
-blocked_domain = set()
+domain_service = Domain('blocked.txt', 'poisoned.txt')
 blocked_address = set()
 blocked_address_last_sync = current = time.time()
 normal_address = set()
@@ -70,94 +65,6 @@ def update_blocked_address(address):
         blocked_address_last_sync = now
 
 
-def update_blocked_domain():
-    global blocked_domain
-    try:
-        fp = open('blocked.txt', 'r')
-    except IOError as e:
-        _logger.warning("Failed to open blocked.txt: %s", str(e))
-        return False
-    new_blocked_domain = set()
-    for line in fp.readlines():
-        line = line.strip()
-        if len(line) == 0 or line.startswith('#'):
-            continue
-        new_blocked_domain.add(line)
-    fp.close()
-    blocked_domain = new_blocked_domain
-    _logger.info('Updated %d blocked items', len(blocked_domain))
-
-
-def update_poisoned_domain(domain):
-    parts = domain.split('.')
-    if len(parts) > 0 and len(parts[-1].strip()) == 0:
-        parts = parts[: -1]
-    if len(parts[-1]) == 2:
-        name = '.'.join(parts[-3:]) + '.'
-    else:
-        name = '.'.join(parts[-2:]) + '.'
-    old_len = len(poisoned_domain)
-    poisoned_domain.add(name)
-    if len(poisoned_domain) != old_len:
-        try:
-            fp = open('poisoned.txt', 'w')
-            fp.write('\n'.join(poisoned_domain))
-            fp.close()
-        except IOError as e:
-            _logger.warning("Failed to open poisoned.txt: %s", str(e))
-
-
-def load_poisoned_domain():
-    global poisoned_domain
-    try:
-        fp = open('poisoned.txt', 'r')
-    except IOError as e:
-        _logger.warning("Failed to open poisoned.txt: %s", str(e))
-        return
-    new_poisoned_domain = set()
-    for line in fp.readlines():
-        line = line.strip()
-        if len(line) == 0 or line.startswith('#'):
-            continue
-        new_poisoned_domain.add(line)
-    fp.close()
-    poisoned_domain = new_poisoned_domain
-    _logger.info('loaded %d poisoned items', len(poisoned_domain))
-
-
-class MyHandler(PatternMatchingEventHandler):
-
-    def __init__(self):
-        super(MyHandler, self).__init__(patterns=['*blocked.txt'])
-
-    def on_modified(self, event):
-        update_blocked_domain()
-
-    def on_created(self, event):
-        update_blocked_domain()
-
-
-update_blocked_domain()
-load_poisoned_domain()
-event_handler = MyHandler()
-observer = Observer()
-observer.schedule(event_handler, path='./', recursive=False)
-observer.start()
-
-
-def is_domain_blocked(domain):
-    global blocked_domain
-    global poisoned_domain
-    m = re.search('([^.]+\.){2}[^.]{2}\.$', domain)
-    if m is not None and (m.group(0) in blocked_domain or m.group(0) in poisoned_domain):
-        return True
-    else:
-        m = re.search('[^.]+\.[^.]+\.$', domain)
-        if m is not None and (m.group(0) in blocked_domain or m.group(0) in poisoned_domain):
-            return True
-    return False
-
-
 def change_src(packet):
     packet.set_raw_source_ip(packet.get_raw_source_ip() + 1)
 
@@ -179,7 +86,7 @@ def try_parse_dns_query(packet):
                 name = str(question.get_qname())
                 ret.append(name)
             return ret, query.header.id
-        except object:
+        except Exception:
             _logger.warning("Failed to parse DNS query")
     return None, None
 
@@ -194,14 +101,9 @@ def try_parse_dns_result(packet):
                     addr, = struct.unpack('!I', struct.pack('!BBBB', *rr.rdata.data))
                     ret.append(addr)
             return ret, result.header.id, str(result.get_q().get_qname())
-        except object:
+        except Exception:
             _logger.warning("Failed to parse DNS result")
     return None, None, None
-
-
-def address2uuid(addr, port):
-    packed = struct.pack('!QQ', 0, (addr + port) & 0xFFFFFFFFFFFFFFFF)
-    return uuid.UUID(bytes=packed)
 
 
 def pack_dns_key(addr, port, id_):
@@ -259,7 +161,7 @@ def is_through_tunnel(packet, to_addr):
     if domain_list is not None:
         dns_query = True
         for domain in domain_list:
-            through_tunnel = is_domain_blocked(domain)
+            through_tunnel = domain_service.is_blocked(domain)
             if through_tunnel:
                 break
         if through_tunnel:
@@ -312,7 +214,7 @@ def gen_on_connect_side_tun_dev_received(addr, gateway, tunnel):
             if addr_list is not None:
                 if packet.get_raw_source_ip() == TEST_DNS_SERVER:
                     _logger.error('POISONED DOMAIN: %s', domain)
-                    update_poisoned_domain(domain)
+                    domain_service.update_poisoned_domain(domain)
                     return True
                 else:
                     normal_address.update(addr_list)
