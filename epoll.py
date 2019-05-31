@@ -130,5 +130,5 @@ class Epoll:
 
         current_time = time.time()
         if current_time - self._last_time > 60.0:
-            _logger.info('current number of opened fd: %d', len(self._fd_mask))
+            _logger.debug('current number of opened fd: %d', len(self._fd_mask))
             self._last_time = current_time

@@ -149,7 +149,7 @@ class RawSocket(object):
         try:
             payload = self._obscure(packet)
             sent = self._fd.send(payload)
-            _logger.info("%s sent %d bytes", str(self), sent)
+            _logger.debug("%s sent %d bytes", str(self), sent)
             if sent != len(payload):
                 _logger.error('%s short send %d(%d)', str(self), sent, len(payload))
         except self._errorType as msg:

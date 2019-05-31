@@ -95,7 +95,7 @@ class TunDevice(object):
     def send(self, packet):
         try:
             sent = os.write(self._fd.fileno(), packet)
-            _logger.info("%s sent %d bytes", str(self), sent)
+            _logger.debug("%s sent %d bytes", str(self), sent)
             if sent != len(packet):
                 _logger.error('%s short send %d(%d)', str(self), sent, len(packet))
         except self._errorType as msg:
