@@ -49,9 +49,10 @@ class Tunnel(object):
 
     def _on_connect_side_raw_socket_received(self, _, payload, __):
         packet = Packet(payload)
-        addr_list, id_, _ = try_parse_dns_result(packet)
+        is_dns_result, addr_list, id_, _ = try_parse_dns_result(packet)
         if addr_list is not None:
             self._address_service.update_blocked_address(addr_list)
+        if is_dns_result:
             try_restore_dns(packet, id_)
         self._tun_device.send(packet.get_packet())
 
@@ -61,7 +62,7 @@ class Tunnel(object):
             if packet.is_rst():
                 _logger.info('%s has been reset', packet.get_source_ip())
 
-            addr_list, id_, domain = try_parse_dns_result(packet)
+            is_dns_result, addr_list, id_, domain = try_parse_dns_result(packet)
             if addr_list is not None:
                 if packet.get_raw_source_ip() == self._test_dns_server:
                     _logger.error('POISONED DOMAIN: %s', domain)
@@ -69,7 +70,8 @@ class Tunnel(object):
                     return
                 else:
                     self._normal_address.update(addr_list)
-                    try_restore_dns(packet, id_)
+            if is_dns_result:
+                try_restore_dns(packet, id_)
             self._tun_device.send(packet.get_packet())
             return
 
@@ -122,19 +124,22 @@ class Tunnel(object):
         if self._global_proxy:
             return True
 
-        domain_list, id_ = try_parse_dns_query(packet)
-        if domain_list is not None:
+        is_dns_query, domain_list, id_ = try_parse_dns_query(packet)
+        if is_dns_query:
             blocked = False
-            for domain in domain_list:
+            for domain, q_type in domain_list:
+                if q_type == 'AAAA':
+                    blocked = True
+                    break
                 blocked = self._domain_service.is_blocked(domain)
                 if blocked:
                     break
             if blocked:
-                _logger.info("query: %s through tunnel", ', '.join(domain_list))
+                _logger.info("query: %s through tunnel", ', '.join(map(lambda t: t[0] + '-' + t[1], domain_list)))
                 change_to_dns_server(packet, id_, self._clean_dns_server)
                 return True
             else:
-                _logger.info("query: %s directly", ', '.join(domain_list))
+                _logger.info("query: %s directly", ', '.join(map(lambda t: t[0] + '-' + t[1], domain_list)))
                 change_to_dns_server(packet, id_, self._fast_dns_server)
                 self._test_domain_poisoned(packet)
                 return False
@@ -162,12 +167,13 @@ def try_parse_dns_query(packet):
             ret = []
             query = DNSRecord.parse(packet.get_udp_load())
             for question in query.questions:
+                q_type = QTYPE.get(question.qtype)
                 name = str(question.get_qname())
-                ret.append(name)
-            return ret, query.header.id
-        except Exception:
-            _logger.warning("Failed to parse DNS query")
-    return None, None
+                ret.append((name, q_type))
+            return True, ret, query.header.id
+        except Exception as ex:
+            _logger.warning("Failed to parse DNS query: %s", str(ex))
+    return False, None, None
 
 
 def try_parse_dns_result(packet):
@@ -179,10 +185,10 @@ def try_parse_dns_result(packet):
                 if rr.rtype == QTYPE.A:
                     addr, = struct.unpack('!I', struct.pack('!BBBB', *rr.rdata.data))
                     ret.append(addr)
-            return ret, result.header.id, str(result.get_q().get_qname())
-        except Exception:
-            _logger.warning("Failed to parse DNS result")
-    return None, None, None
+            return True, ret, result.header.id, str(result.get_q().get_qname())
+        except Exception as ex:
+            _logger.warning("Failed to parse DNS result: %s", str(ex))
+    return False, None, None, None
 
 
 def pack_dns_key(addr, port, id_):
