@@ -34,7 +34,7 @@ class RawSocket(object):
     def __str__(self):
         return "%s: %d" % (self._prefix, self._fd.fileno())
 
-    def __init__(self, mtu, proto):
+    def __init__(self, proto, mtu):
         self._fd = socket.socket(socket.AF_INET, socket.SOCK_RAW, proto)
         self._prefix = 'RAW-' + str(proto)
         self._fd.setblocking(False)

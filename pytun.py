@@ -5,9 +5,7 @@ import sys
 import epoll
 import event
 import loglevel
-import tunnel
-from rawsocket import RawSocket
-from tundevice import TunDevice
+from tunnel import Tunnel
 
 _logger = loglevel.get_logger('main')
 
@@ -18,8 +16,8 @@ def acceptor_on_closed(_self):
 
 
 _helpText = '''Usage:
-Connect Side: -c {server_ip} -t tun_if
-Accept Side: -a {listen_on} -t tun_if
+Connect Side: -c {server_ip} -t if_name -p ip_proto -m mtu
+Accept Side: -a -t if_name -p ip_proto -m mtu
 '''
 
 
@@ -29,11 +27,11 @@ if __name__ == '__main__':
     addr = None
     accept_mode = False
     connect_mode = False
-    tun_if = None
+    if_name = None
+    ip_proto = None
     mtu = None
-    proto = None
 
-    optlist, args = getopt.getopt(sys.argv[1:], 'ac:t:m:p:h')
+    optlist, args = getopt.getopt(sys.argv[1:], 'ac:t:p:m:h')
     for cmd, arg in optlist:
         if cmd == '-a':
             accept_mode = True
@@ -45,11 +43,11 @@ if __name__ == '__main__':
                 raise Exception('Already in Accept Mode')
             addr = arg
         if cmd == '-t':
-            tun_if = arg
+            if_name = arg
+        if cmd == '-p':
+            ip_proto = int(arg)
         if cmd == '-m':
             mtu = int(arg)
-        if cmd == '-p':
-            proto = int(arg)
         if cmd == '-h':
             print(_helpText)
             sys.exit(0)
@@ -58,19 +56,9 @@ if __name__ == '__main__':
         print(_helpText)
         sys.exit(0)
 
-    dev = TunDevice(tun_if, mtu)
-    raw = RawSocket(mtu, proto)
-
     if accept_mode:
-        raw.set_on_receive(tunnel.gen_on_accept_side_raw_tun_received(dev))
-        dev.set_on_receive(tunnel.gen_on_accept_side_tun_dev_received(raw))
-        raw.begin_receiving()
+        tunnel = Tunnel(None, if_name, ip_proto, mtu, None, None)
     else:
-        raw.connect(addr)
-        raw.set_on_receive(tunnel.gen_on_connect_side_raw_tun_received(dev))
-        dev.set_on_receive(tunnel.gen_on_connect_side_tun_dev_received('10.14.0.2', '10.14.0.1', raw))
-        raw.begin_receiving()
-
-    dev.begin_receiving()
+        tunnel = Tunnel(addr, if_name, ip_proto, mtu, "10.14.0.2", "10.14.0.1")
 
     event.Event.process_loop()

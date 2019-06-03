@@ -10,37 +10,150 @@ from dns import DNSRecord
 from dns import QTYPE
 from domain import Domain
 from packet import Packet
+from rawsocket import RawSocket
+from tundevice import TunDevice
 
 _logger = loglevel.get_logger('tunnel')
 _logger.setLevel(loglevel.DEFAULT_LEVEL)
 
-
-def ip_string_to_long(ip):
+def _ip_string_to_long(ip):
     return struct.unpack('!I', socket.inet_pton(socket.AF_INET, ip))[0]
 
+class Tunnel(object):
 
-FAST_DNS_SERVER = ip_string_to_long('119.29.29.29')
-CLEAN_DNS_SERVER = ip_string_to_long('8.8.8.8')
-TEST_DNS_SERVER = ip_string_to_long('35.201.154.22')
+    def __init__(self, vps_addr, if_name, ip_proto, mtu, local_addr, remote_addr):
+        self._tun_device = TunDevice(if_name, mtu)
+        self._raw_socket = RawSocket(ip_proto, mtu)
+        if vps_addr is not None:
+            self._global_proxy = False
+            self._domain_service = Domain('blocked.txt', 'poisoned.txt')
+            self._address_service = Address('blocked_ip.txt')
+            self._normal_address = set()
+
+            self._fast_dns_server = _ip_string_to_long('119.29.29.29')
+            self._clean_dns_server = _ip_string_to_long('8.8.8.8')
+            self._test_dns_server = _ip_string_to_long('35.201.154.22')
+
+            self._local_addr = _ip_string_to_long(local_addr)
+            self._remote_addr = _ip_string_to_long(remote_addr)
+            self._raw_socket.connect(vps_addr)
+            self._raw_socket.set_on_receive(self._on_connect_side_raw_socket_received)
+            self._tun_device.set_on_receive(self._on_connect_side_tun_device_received)
+        else:
+            self._vps_addr = None
+            self._raw_socket.set_on_receive(self._on_accept_side_raw_socket_received)
+            self._tun_device.set_on_receive(self._on_accept_side_tun_device_received)
+
+        self._raw_socket.begin_receiving()
+        self._tun_device.begin_receiving()
+
+    def _on_connect_side_raw_socket_received(self, _, payload, __):
+        packet = Packet(payload)
+        addr_list, id_, _ = try_parse_dns_result(packet)
+        if addr_list is not None:
+            self._address_service.update_blocked_address(addr_list)
+            try_restore_dns(packet, id_)
+        self._tun_device.send(packet.get_packet())
+
+    def _on_connect_side_tun_device_received(self, _, __, packet):
+        if self._need_restore(self._local_addr, packet):
+            self._restore_dst(packet)
+            if packet.is_rst():
+                _logger.info('%s has been reset', packet.get_source_ip())
+
+            addr_list, id_, domain = try_parse_dns_result(packet)
+            if addr_list is not None:
+                if packet.get_raw_source_ip() == self._test_dns_server:
+                    _logger.error('POISONED DOMAIN: %s', domain)
+                    self._domain_service.update_poisoned_domain(domain)
+                    return
+                else:
+                    self._normal_address.update(addr_list)
+                    try_restore_dns(packet, id_)
+            self._tun_device.send(packet.get_packet())
+            return
+
+        through_tunnel = self._is_through_tunnel(packet)
+        if through_tunnel:
+            self._raw_socket.send(packet.get_packet())
+        else:
+            self._change_src(packet)
+            self._tun_device.send(packet.get_packet())
+
+    def _on_accept_side_raw_socket_received(self, _, packet, addr):
+        if self._vps_addr is None or self._vps_addr != addr[0]:
+            self._vps_addr = addr[0]
+            self._raw_socket.connect(self._vps_addr)
+        self._tun_device.send(packet)
+
+    def _on_accept_side_tun_device_received(self, _, packet, __):
+        self._raw_socket.send(packet)
+
+    @staticmethod
+    def _change_src(packet):
+        packet.set_raw_source_ip(packet.get_raw_source_ip() + 1)
+
+    @staticmethod
+    def _need_restore(original, packet):
+        return packet.is_ipv4() and packet.get_raw_destination_ip() == original + 1
+
+    @staticmethod
+    def _restore_dst(packet):
+        packet.set_raw_destination_ip(packet.get_raw_destination_ip() - 1)
+
+    def _test_domain_poisoned(self, packet):
+        copied = copy.deepcopy(packet)
+        copied.set_raw_destination_ip(self._test_dns_server)
+        copied.set_udp_load(0, 2, struct.pack('!H', random.randint(0, 0xffff)))
+        self._change_src(copied)
+        self._tun_device.send(copied.get_packet())
+
+    def _is_through_tunnel(self, packet):
+        if packet.is_ipv6():
+            return True
+
+        dst_ip = packet.get_raw_destination_ip()
+        if dst_ip == self._remote_addr:
+            return True
+
+        if cird.is_reversed_address(dst_ip):
+            return False
+
+        if self._global_proxy:
+            return True
+
+        domain_list, id_ = try_parse_dns_query(packet)
+        if domain_list is not None:
+            blocked = False
+            for domain in domain_list:
+                blocked = self._domain_service.is_blocked(domain)
+                if blocked:
+                    break
+            if blocked:
+                _logger.info("query: %s through tunnel", ', '.join(domain_list))
+                change_to_dns_server(packet, id_, self._clean_dns_server)
+                return True
+            else:
+                _logger.info("query: %s directly", ', '.join(domain_list))
+                change_to_dns_server(packet, id_, self._fast_dns_server)
+                self._test_domain_poisoned(packet)
+                return False
+
+        through_tunnel = False
+        if self._address_service.is_blocked(dst_ip):
+            _logger.debug('address: %s sent via tunnel', packet.get_destination_ip())
+            through_tunnel = True
+
+        if not through_tunnel and dst_ip not in self._normal_address:
+            _logger.info('unknown address: %s %s:%d (from: %s:%d) sent directly', packet.get_protocol(),
+                         packet.get_destination_ip(), packet.get_destination_port(),
+                         packet.get_source_ip(), packet.get_source_port())
+            through_tunnel = False
+
+        return through_tunnel
 
 
-global_proxy = True
-domain_service = Domain('blocked.txt', 'poisoned.txt')
-address_service = Address('blocked_ip.txt')
-normal_address = set()
 modified_query = {}
-
-
-def change_src(packet):
-    packet.set_raw_source_ip(packet.get_raw_source_ip() + 1)
-
-
-def need_restore(original, packet):
-    return packet.is_ipv4() and packet.get_raw_destination_ip() == original + 1
-
-
-def restore_dst(packet):
-    packet.set_raw_destination_ip(packet.get_raw_destination_ip() - 1)
 
 
 def try_parse_dns_query(packet):
@@ -94,132 +207,3 @@ def try_restore_dns(packet, id_):
             packet.set_raw_source_ip(original)
         del modified_query[key]
 
-
-def test_domain_poisoned(tun, packet):
-    copied = copy.deepcopy(packet)
-    copied.set_raw_destination_ip(TEST_DNS_SERVER)
-    copied.set_udp_load(0, 2, struct.pack('!H', random.randint(0, 0xffff)))
-    change_src(copied)
-    tun.send(copied.get_packet())
-
-
-def is_through_tunnel(packet, remote_addr):
-    if packet.is_ipv6():
-        return True, False
-
-    dst_ip = packet.get_raw_destination_ip()
-    if dst_ip == remote_addr:
-        return True, False
-
-    if cird.is_reversed_address(dst_ip):
-        _logger.info('destination ip is reversed one: %s:%d, from: %s:%d',
-                     packet.get_destination_ip(), packet.get_destination_port(),
-                     packet.get_source_ip(), packet.get_source_port())
-        return False, False
-
-    if global_proxy:
-        return True, False
-
-    through_tunnel = False
-    dns_query = False
-
-    domain_list, id_ = try_parse_dns_query(packet)
-    if domain_list is not None:
-        dns_query = True
-        for domain in domain_list:
-            through_tunnel = domain_service.is_blocked(domain)
-            if through_tunnel:
-                break
-        if through_tunnel:
-            _logger.info("query: %s through tunnel", ', '.join(domain_list))
-            change_to_dns_server(packet, id_, CLEAN_DNS_SERVER)
-        else:
-            _logger.info("query: %s directly", ', '.join(domain_list))
-            change_to_dns_server(packet, id_, FAST_DNS_SERVER)
-
-    if not through_tunnel:
-        if address_service.is_blocked(dst_ip):
-            _logger.debug('address: %s sent via tunnel', packet.get_destination_ip())
-            through_tunnel = True
-
-    if not through_tunnel and not dns_query and dst_ip not in normal_address:
-        _logger.info('unknown address: %s %s:%d (from: %s:%d) sent directly', packet.get_protocol(),
-                     packet.get_destination_ip(), packet.get_destination_port(),
-                     packet.get_source_ip(), packet.get_source_port())
-        through_tunnel = False
-
-    return through_tunnel, dns_query
-
-
-def gen_on_connect_side_raw_tun_received(tun):
-
-    def on_received(_, ip_packet, __):
-        packet = Packet(ip_packet)
-        addr_list, id_, _ = try_parse_dns_result(packet)
-        if addr_list is not None:
-            address_service.update_blocked_address(addr_list)
-            try_restore_dns(packet, id_)
-        tun.send(packet.get_packet())
-        return True
-
-    return on_received
-
-
-def gen_on_connect_side_tun_dev_received(addr, gateway, tunnel):
-
-    local_addr = ip_string_to_long(addr)
-    remote_addr = ip_string_to_long(gateway)
-
-    def connect_side_multiplex(self_, _, packet):
-        if need_restore(local_addr, packet):
-            restore_dst(packet)
-            if packet.is_rst():
-                _logger.info('%s has been reset', packet.get_source_ip())
-
-            addr_list, id_, domain = try_parse_dns_result(packet)
-            if addr_list is not None:
-                if packet.get_raw_source_ip() == TEST_DNS_SERVER:
-                    _logger.error('POISONED DOMAIN: %s', domain)
-                    domain_service.update_poisoned_domain(domain)
-                    return True
-                else:
-                    normal_address.update(addr_list)
-                    try_restore_dns(packet, id_)
-            self_.send(packet.get_packet())
-            return True
-
-        through_tunnel, dns_query = is_through_tunnel(packet, remote_addr)
-        if not through_tunnel:
-            if dns_query is True:
-                test_domain_poisoned(self_, packet)
-            change_src(packet)
-            self_.send(packet.get_packet())
-            return True
-
-        tunnel.send(packet.get_packet())
-        return True
-
-    return connect_side_multiplex
-
-
-def gen_on_accept_side_raw_tun_received(tun):
-
-    remote_addr = [None]
-
-    def on_received(tunnel, packet, addr):
-        if remote_addr[0] is None or remote_addr[0] != addr[0]:
-            remote_addr[0] = addr[0]
-            tunnel.connect(remote_addr[0])
-        tun.send(packet)
-        return True
-
-    return on_received
-
-
-def gen_on_accept_side_tun_dev_received(raw):
-
-    def on_received(_, packet, __):
-        raw.send(packet)
-        return True
-
-    return on_received
