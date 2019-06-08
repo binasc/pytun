@@ -127,7 +127,7 @@ class RawSocket(object):
     def _receive(self):
         while True:
             try:
-                packet, addr = self._fd.recvfrom(self._mtu)
+                packet, addr = self._fd.recvfrom(self._mtu + 8 + 20)
                 if self._on_received is not None:
                     payload = self._restore(packet)
                     if payload is None:
