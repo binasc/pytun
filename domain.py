@@ -59,6 +59,7 @@ class Domain(object):
                 fp = open(self._poisoned_file, 'w')
                 fp.write('\n'.join(self._poisoned_domain))
                 fp.close()
+                _logger.info("Synced %d poisoned domains", len(self._poisoned_domain))
             except IOError as e:
                 _logger.warning("Failed to open %s: %s", self._poisoned_file, str(e))
 
