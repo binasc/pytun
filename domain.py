@@ -44,16 +44,17 @@ class Domain(object):
         self._blocked_domain = new_blocked_domain
         _logger.info('Updated %d blocked items', len(new_blocked_domain))
 
-    def update_poisoned_domain(self, domain):
-        parts = domain.split('.')
-        if len(parts) > 0 and len(parts[-1].strip()) == 0:
-            parts = parts[: -1]
-        if len(parts[-1]) == 2:
-            name = '.'.join(parts[-3:]) + '.'
-        else:
-            name = '.'.join(parts[-2:]) + '.'
+    def update_poisoned_domain(self, domains):
         old_len = len(self._poisoned_domain)
-        self._poisoned_domain.add(name)
+        for domain in domains:
+            parts = domain.split('.')
+            if len(parts) > 0 and len(parts[-1].strip()) == 0:
+                parts = parts[: -1]
+            if len(parts[-1]) == 2:
+                name = '.'.join(parts[-3:]) + '.'
+            else:
+                name = '.'.join(parts[-2:]) + '.'
+            self._poisoned_domain.add(name)
         if len(self._poisoned_domain) != old_len:
             try:
                 fp = open(self._poisoned_file, 'w')

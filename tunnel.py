@@ -29,7 +29,6 @@ class Tunnel(object):
             self._domain_service = Domain('blocked.txt', 'poisoned.txt')
             self._address_service = Address('blocked_ip.txt')
             self._name_service = Name()
-            self._normal_address = set()
 
             self._fast_dns_server = _ip_string_to_long('119.29.29.29')
             self._clean_dns_server = _ip_string_to_long('8.8.8.8')
@@ -52,10 +51,7 @@ class Tunnel(object):
         packet = Packet(payload)
         dns_packet = DnsPacket(packet)
         if dns_packet.is_dns_packet():
-            addresses = []
-            for _, __, addr in dns_packet.get_answers():
-                addresses.append(addr)
-            self._address_service.update_blocked_address(addresses)
+            self._address_service.update_blocked_address(dns_packet.get_answers())
             self._name_service.try_restore_dns(packet, dns_packet.get_id())
         self._tun_device.send(packet.get_packet())
 
@@ -63,16 +59,17 @@ class Tunnel(object):
         if self._need_restore(self._local_addr, packet):
             self._restore_dst(packet)
             if packet.is_rst():
-                _logger.info('%s has been reset', packet.get_source_ip())
+                name = self._address_service.ptr_resolve(packet.get_raw_source_ip())
+                _logger.info('%s has been reset', packet.get_source_ip() if name is None else name)
 
             dns_packet = DnsPacket(packet)
             if dns_packet.is_dns_packet():
-                for name, _, addr in dns_packet.get_answers():
-                    if packet.get_raw_source_ip() == self._test_dns_server:
-                        _logger.error('POISONED DOMAIN: %s', name)
-                        self._domain_service.update_poisoned_domain(name)
-                        return
-                    self._normal_address.add(addr)
+                if packet.get_raw_source_ip() == self._test_dns_server:
+                    names = map(lambda a: a[0], dns_packet.get_answers())
+                    _logger.error('POISONED DOMAIN: %s', names)
+                    self._domain_service.update_poisoned_domain(names)
+                    return
+                self._address_service.update_normal_address(dns_packet.get_answers())
                 self._name_service.try_restore_dns(packet, dns_packet.get_id())
             self._tun_device.send(packet.get_packet())
             return
@@ -152,7 +149,7 @@ class Tunnel(object):
             _logger.debug('address: %s sent via tunnel', packet.get_destination_ip())
             return True
 
-        if dst_ip not in self._normal_address:
+        if not self._address_service.is_normal(dst_ip):
             _logger.debug('unknown address: %s %s:%d (from: %s:%d) sent directly', packet.get_protocol(),
                           packet.get_destination_ip(), packet.get_destination_port(),
                           packet.get_source_ip(), packet.get_source_port())

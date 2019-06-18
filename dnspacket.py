@@ -37,7 +37,7 @@ class DnsPacket(object):
                 r_type = QTYPE.get(rr.rtype)
                 if rr.rtype == QTYPE.A:
                     addr, = struct.unpack('!I', struct.pack('!BBBB', *rr.rdata.data))
-                    self._answers.append((name, r_type, addr))
+                    self._answers.append((name, r_type, addr, rr.ttl))
 
         except Exception as ex:
             _logger.warning("Failed to parse DNS query: %s", str(ex))
