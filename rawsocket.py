@@ -20,7 +20,6 @@ random.seed()
 def _xor(key, data):
     return strxor(data, bytes((ceil(len(data) / len(key)) * key))[:len(data)])
 
-
 class RawSocket(object):
 
     def __hash__(self):
@@ -141,6 +140,7 @@ class RawSocket(object):
             except self._errorType as msg:
                 if msg.errno != errno.EAGAIN and msg.errno != errno.EINPROGRESS:
                     _logger.error('%s recv error: %s', str(self), str(msg))
+                    traceback.print_exc()
                 break
 
     def send(self, packet):

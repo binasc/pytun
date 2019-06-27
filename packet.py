@@ -100,10 +100,12 @@ class Packet(object):
     def _parse_tcp(self):
         self._parse_ip()
         offset = self._ip['length']
-        sport, dport, _, _, _, flags, _, checksum = struct.unpack('!HHIIBBHH', self._packet[offset: offset + 18])
+        sport, dport, seq, ack, _, flags, _, checksum = struct.unpack('!HHIIBBHH', self._packet[offset: offset + 18])
         self._tcp = {
             'sport': sport,
             'dport': dport,
+            'seq': seq,
+            'ack': ack,
             'checksum': checksum,
             'flags': flags
         }
@@ -135,10 +137,34 @@ class Packet(object):
         self._parse_ip()
         return self._ip['protocol'] == self.PROTO_TCP
 
+    def get_seq(self):
+        if self.is_tcp():
+            self._parse_tcp()
+            return self._tcp['seq']
+        return None
+
+    def get_ack(self):
+        if self.is_tcp():
+            self._parse_tcp()
+            return self._tcp['ack']
+        return None
+
+    def is_syn(self):
+        if self.is_tcp():
+            self._parse_tcp()
+            return self._tcp['flags'] & 0x02 != 0
+        return False
+
+    def is_ack(self):
+        if self.is_tcp():
+            self._parse_tcp()
+            return self._tcp['flags'] & 0x10 != 0
+        return False
+
     def is_rst(self):
         if self.is_tcp():
             self._parse_tcp()
-            return self._tcp['flags'] & 0x20 != 0
+            return self._tcp['flags'] & 0x04 != 0
         return False
 
     def get_raw_source_ip(self):
@@ -236,3 +262,44 @@ class Packet(object):
         if self.is_udp():
             self._parse_udp()
             self._udp_delta += delta
+
+def _ip_string_to_long(ip):
+    return struct.unpack('!I', socket.inet_pton(socket.AF_INET, ip))[0]
+
+def _checksum(seq, syn, ack, payload):
+    if payload is not None:
+        payload_len = len(payload)
+    else:
+        payload_len = 0
+    fake_ip = struct.pack('!IIBBH',
+                          _ip_string_to_long('222.65.214.49'),
+                          _ip_string_to_long('34.92.57.199'),
+                          0, socket.IPPROTO_TCP, 20 + payload_len)
+    flag = 0
+    if syn:
+        flag = flag | 0x02
+    if ack:
+        flag = flag | 0x10
+    tcp_hdr = struct.pack('!HHIIBBHHH', 60000, 443, seq, seq + payload_len + 1, 0x50, flag, 1500, 0, 0)
+
+    checksum = 0
+
+    for i in range(0, len(fake_ip) - 1, 2):
+        checksum = checksum + (fake_ip[i] << 8) + fake_ip[i + 1]
+
+    for i in range(0, len(tcp_hdr) - 1, 2):
+        checksum = checksum + (tcp_hdr[i] << 8) + tcp_hdr[i + 1]
+
+    if payload is not None:
+        for i in range(0, len(payload) - 1, 2):
+            checksum = checksum + (payload[i] << 8) + payload[i + 1]
+
+        if len(payload) & 0x1 != 0:
+            checksum = checksum + (payload[len(payload) - 1] << 8)
+
+    while checksum > 0xffff:
+        checksum = (checksum & 0xffff) + (checksum >> 16)
+
+    checksum = ~checksum & 0xffff
+    return tcp_hdr[0: 16] + struct.pack('!HH', checksum, 0)
+
