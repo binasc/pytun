@@ -24,7 +24,7 @@ class Address(object):
                 self._names[name] = 0
             self._names[name] = self._names[name] + 1
 
-        def expire(self, name):
+        def remove(self, name):
             if name in self._names:
                 self._names[name] = self._names[name] - 1
                 if self._names[name] == 0:
@@ -37,6 +37,23 @@ class Address(object):
 
         def names_str(self):
             return ', '.join(map(lambda n: n[0], self._names))
+
+        @staticmethod
+        def update(records: dict, addr: int, name: str):
+            if addr not in records:
+                records[addr] = Address.Record(addr)
+            records[addr].append(name)
+
+        @staticmethod
+        def expire(records: dict, addr: int, name: str):
+            if addr in records:
+                record = records[addr]
+                record.remove(name)
+                if record.is_empty():
+                    del records[addr]
+                _logger.debug('%s expired', name)
+            else:
+                _logger.warning('no record for name: %s', name)
 
     def __init__(self, blocked_file):
         self._blocked_file = blocked_file
@@ -65,26 +82,15 @@ class Address(object):
 
         for name, _, addr, ttl in answers:
             heapq.heappush(self._records_heap, (now + ttl, (addr, name)))
-            if addr not in self._ip2record:
-                self._ip2record[addr] = self.Record(addr)
-            self._ip2record[addr].append(name)
+            self.Record.update(self._ip2record, addr, name)
 
         while len(self._records_heap) > 0:
-            expired_at, addr_name = self._records_heap[0]
+            expired_at, _ = self._records_heap[0]
             if expired_at > now:
                 break
             else:
-                heapq.heappop(self._records_heap)
-                addr = addr_name[0]
-                name = addr_name[1]
-                if addr in self._ip2record:
-                    record = self._ip2record[addr]
-                    record.expire(name)
-                    if record.is_empty():
-                        del self._ip2record[addr]
-                    _logger.debug('%s expired', name)
-                else:
-                    _logger.warning('no record for name: %s', name)
+                addr_name = heapq.heappop(self._records_heap)
+                self.Record.expire(self._ip2record, addr_name[0], addr_name[1])
 
     def update_blocked_address(self, answers):
         addr_list = []
