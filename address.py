@@ -89,7 +89,7 @@ class Address(object):
             if expired_at > now:
                 break
             else:
-                addr_name = heapq.heappop(self._records_heap)
+                _, addr_name = heapq.heappop(self._records_heap)
                 self.Record.expire(self._ip2record, addr_name[0], addr_name[1])
 
     def update_blocked_address(self, answers):
