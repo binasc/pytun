@@ -36,7 +36,7 @@ class Address(object):
             return len(self._names) == 0
 
         def names_str(self):
-            return ', '.join(map(lambda n: n[0], self._names))
+            return ', '.join(map(lambda n: n, self._names))
 
         @staticmethod
         def update(records: dict, addr: int, name: str):
