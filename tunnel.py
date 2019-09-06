@@ -158,3 +158,6 @@ class Tunnel(object):
                           packet.get_destination_ip(), packet.get_destination_port(),
                           packet.get_source_ip(), packet.get_source_port())
         return False
+
+    def on_stopped(self):
+        self._address_service.flush_blocked_address()

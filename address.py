@@ -101,17 +101,20 @@ class Address(object):
         self._blocked_address.update(addr_list)
 
         if now - self._last_sync > 60 and self._last_size != len(self._blocked_address):
-            try:
-                fp = open(self._blocked_file, 'wb')
-            except IOError as e:
-                _logger.warning("Failed to write %s: %s", self._blocked_file, str(e))
-                return
-            for ip in self._blocked_address:
-                fp.write(struct.pack('!I', ip))
-            fp.close()
-            _logger.info("Synced %d blocked ip", len(self._blocked_address))
+            self.flush_blocked_address()
             self._last_size = len(self._blocked_address)
             self._last_sync = now
+
+    def flush_blocked_address(self):
+        try:
+            fp = open(self._blocked_file, 'wb')
+        except IOError as e:
+            _logger.warning("Failed to write %s: %s", self._blocked_file, str(e))
+            return
+        for ip in self._blocked_address:
+            fp.write(struct.pack('!I', ip))
+        fp.close()
+        _logger.info("Synced %d blocked ip", len(self._blocked_address))
 
     def is_normal(self, ip):
         return ip in self._ip2record

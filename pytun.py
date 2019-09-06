@@ -1,14 +1,17 @@
 #!/usr/bin/env python
 import getopt
+import signal
 import sys
 from configparser import ConfigParser
 
 import epoll
 import event
 import loglevel
+from event import Event
 from tunnel import Tunnel
 
 _logger = loglevel.get_logger('main')
+_tunnel = None
 
 
 def acceptor_on_closed(_self):
@@ -19,6 +22,11 @@ def acceptor_on_closed(_self):
 _helpText = '''Usage:
 pytun.py -c|-a [-f {config-file}]
 '''
+
+def stop_signal_handler(_, __):
+    Event.stop_loop()
+    if _tunnel is not None:
+        _tunnel.on_stopped()
 
 
 if __name__ == '__main__':
@@ -51,6 +59,9 @@ if __name__ == '__main__':
     config = ConfigParser()
     config.read(config_file)
     config.set('common', 'mode', 'ACCEPT' if accept_mode else 'CONNECT')
-    tunnel = Tunnel(config)
+    _tunnel = Tunnel(config)
+
+    signal.signal(signal.SIGINT, stop_signal_handler)
 
     event.Event.process_loop()
+    _logger.info('bye')

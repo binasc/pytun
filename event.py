@@ -10,6 +10,7 @@ _logger.setLevel(loglevel.DEFAULT_LEVEL)
 
 class Event:
 
+    _stopped = False
     _timers = []
 
     def __init__(self):
@@ -95,5 +96,9 @@ class Event:
 
     @staticmethod
     def process_loop():
-        while True:
+        while Event._stopped is False:
             Event.process_events_and_timers()
+
+    @staticmethod
+    def stop_loop():
+        Event._stopped = True
