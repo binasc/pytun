@@ -21,22 +21,26 @@ def _ip_string_to_long(ip):
 
 class Tunnel(object):
 
-    def __init__(self, vps_addr, if_name, ip_proto, mtu, local_addr, remote_addr):
+    def __init__(self, config):
+        if_name = config.get('common', 'tun_device')
+        mtu = config.getint('common', 'mtu')
+        ip_proto = config.getint('common', 'ip_proto')
+
         self._tun_device = TunDevice(if_name, mtu)
         self._raw_socket = RawSocket(ip_proto, mtu)
-        if vps_addr is not None:
+        if config.get('common', 'mode') == 'CONNECT':
             self._global_proxy = False
             self._domain_service = Domain('blocked.txt', 'poisoned.txt')
             self._address_service = Address('blocked_ip.txt')
             self._name_service = Name()
 
-            self._fast_dns_server = _ip_string_to_long('119.29.29.29')
-            self._clean_dns_server = _ip_string_to_long('8.8.8.8')
-            self._test_dns_server = _ip_string_to_long('35.201.154.22')
+            self._fast_dns_server = _ip_string_to_long(config.get('client', 'fast_dns'))
+            self._clean_dns_server = _ip_string_to_long(config.get('client', 'clean_dns'))
+            self._test_dns_server = _ip_string_to_long(config.get('client', 'test_dns'))
 
-            self._local_addr = _ip_string_to_long(local_addr)
-            self._remote_addr = _ip_string_to_long(remote_addr)
-            self._raw_socket.connect(vps_addr)
+            self._local_addr = _ip_string_to_long(config.get('client', 'local_addr'))
+            self._remote_addr = _ip_string_to_long(config.get('client', 'remote_addr'))
+            self._raw_socket.connect(config.get('client', 'vps_addr'))
             self._raw_socket.set_on_receive(self._on_connect_side_raw_socket_received)
             self._tun_device.set_on_receive(self._on_connect_side_tun_device_received)
         else:
